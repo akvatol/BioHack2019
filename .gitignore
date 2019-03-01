@@ -1,0 +1,9 @@
+.vscode/settings.json
+.venv
+.vscode
+*.pyc
+.coverage
+*xml
+.noseids
+*.json
+*.csv
