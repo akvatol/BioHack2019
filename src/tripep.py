@@ -4,6 +4,7 @@ from sklearn.metrics import mean_squared_error
 from itertools import product
 import h5py
 from tqdm import tqdm
+from mpi4py import MPI
 
 TRASHHOLD = 1
 
@@ -13,35 +14,66 @@ amino_alphabet = [
 ]
 
 
-def get_dipep(k=2):
-    dipep = [''.join(kmer) for kmer in product(amino_alphabet, repeat=k)]
-    return dipep
+def time(func):
+    import time
+
+    def wrapper(*args, **kwargs):
+        t = time.perf_counter()
+        res = func(*args, **kwargs)
+        print(func.__name__, time.perf_counter() - t)
+        return res
+
+    return wrapper
+
+
+def get_pep(k=None):
+    tripep = [''.join(kmer) for kmer in product(amino_alphabet, repeat=k)]
+    return tripep
 
 
 def walker(pep_type: str):
+    """
+    Генерирует все возможные пептиды, которые можно соеденить с 
+    pep_type
+    """
     pep_list = []
-    for i in range(0, 20):
-        pos_pep = pep_type[0:2] + amino_alphabet[i]
-        pep_list.append(pos_pep)
-        i += 1
-    for j in range(0, len(get_dipep())):
-        pos_pep = pep_type[0] + get_dipep()[j]
+    for j in range(0, len(get_pep(len(pep_type) - 1))):
+        pos_pep = pep_type[0] + get_pep(len(pep_type) - 1)[j]
         pep_list.append(pos_pep)
         j += 1
     cutted_pep_list = set(pep_list)
     cutted_pep_list.remove(pep_type)
-    return cutted_pep_list
+    return tuple(cutted_pep_list)
 
 
 def pair_creator(first_pep: str, second_pep: str):
     """
     Принимает на вход два пептида и возвращает все возможные пары
-    комбинаций
+    комбинаций с помощью которых их можно соединить
     """
-    one_aa = []
-    two_aa = []
-    # Из длинны цепи вычитаем 1 или 2 для того чтобы
-    # номера получаемых пар совпадали с индексацией
+    all_pairs = []
+    min_intersec = min((len(first_pep), len(second_pep)))
+    print('DEBUG: min_intersec= ', min_intersec)
+    for i in range(1, min_intersec):
+        if second_pep.endswith(first_pep[:i]):
+            all_pairs.append(''.join([str(x) for x in range(i)]) + ''.join(
+                [str(x) for x in reversed(range(len(second_pep) - i, len(second_pep)))]))
+            print(first_pep[:i])
+            print('DEBUG: = ', '1')
+        if first_pep.endswith(second_pep[:i]):
+            #all_pairs.append()
+            print(second_pep[:i])
+            print('DEBUG: = ', '2')
+
+    return tuple(all_pairs)
+
+
+print(pair_creator('CAA', 'AAA'))
+# %%
+
+
+'''
+    if first_pep[0] == second_pep[-1]
     if first_pep[0] == second_pep[-1]:
         pair = str(0) + str(len(second_pep) - 1)
         one_aa.append(pair)
@@ -56,6 +88,7 @@ def pair_creator(first_pep: str, second_pep: str):
         two_aa.append(pair2)
     if one_aa or two_aa:
         return (tuple(one_aa), tuple(two_aa))
+'''
 
 
 def mean(numbers):
@@ -99,18 +132,6 @@ def chunkit(data: list or tuple, n=None):
         new_data.append(data[int(last):int(last + avg)])
         last += avg
     return np.array(new_data)
-
-
-def time(func):
-    import time
-
-    def wrapper(*args, **kwargs):
-        t = time.perf_counter()
-        res = func(*args, **kwargs)
-        print(func.__name__, time.perf_counter() - t)
-        return res
-
-    return wrapper
 
 
 def rmsd_calc(coord1, coord2):
@@ -176,6 +197,22 @@ class Tripep:
                      obj.docking_pose, pair, rms1, rms2))
         return (list_of_good_pairs)
 
+    def comparsion_three(self, pairs: tuple, obj):
+
+        list_of_good_pairs = []
+        for pair in pairs:
+            rms1 = rmsd_calc(self.coordinates[int(pair[0])],
+                             obj.coordinates[int(pair[2])])
+            rms2 = rmsd_calc(self.coordinates[int(pair[1])],
+                             obj.coordinates[int(pair[3])])
+            if rms1 <= TRASHHOLD and rms2 <= TRASHHOLD:
+                list_of_good_pairs.append(
+                    (self.peptides, self.docking_pose, obj.peptides,
+                     obj.docking_pose, pair, rms1, rms2))
+        return (list_of_good_pairs)
+
+    def comparsion_uni(self, obj): pass
+
     def comparsion(self, obj):
         all_data = []
         all_pairs = pair_creator(self.peptides, obj.peptides)
@@ -204,58 +241,47 @@ def peptides_init(path_to_hdf5: str):
                     coordinates=data_file[key][str(x)][:]) for x in range(10)
             ]
             all_data_from_hdf5.append(one_peptide_data)
-        return all_data_from_hdf5
+        return tuple(all_data_from_hdf5)
 
 
-def peptides_process(peptides_list: tuple, file_name: str):
-    with open(file, 'w') as file:
-        for pep1 in tqdm(range(len(all_data_from_hdf5))):
-            all_peps_for_pep1 = walker(
-                all_data_from_hdf5[pep1][0].peptides)
-            for pep2 in range(pep1, len(all_data_from_hdf5)):
-                if all_data_from_hdf5[pep2][
-                        0].peptides in all_peps_for_pep1:
-                    for x in all_data_from_hdf5[pep1]:
-                        for y in all_data_from_hdf5[pep2]:
+def peptides_process(peptides_list: tuple, new_file_name: str):
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+    data = []
+    with open(new_file_name, 'w') as file:
+        pep1 = rank
+        while pep1 < len(peptides_list):
+            print(str(rank))
+        # for pep1 in tqdm(range(len(peptides_list))):
+            all_peps_for_pep1 = walker(peptides_list[pep1][0].peptides)
+            for pep2 in rangelen((peptides_list)):
+                if peptides_list[pep2][0].peptides in all_peps_for_pep1:
+                    for x in peptides_list[pep1]:
+                        for y in peptides_list[pep2]:
                             c = x.comparsion(y)
                             if c:
-                                file.write(str(c) + ' \n'
+                                data.append(str(c))
+            pep1 += size
 
-# a = Tripep(name='AAA', conf='1', coordinates=np.random.rand(12, 3))
-# b = Tripep(name='ABA', conf='2', coordinates=np.random.rand(12, 3))
+    if rank > 0:
+        comm.send(data)
+    elif rank == 0:
+        for i in range(1, size):
+            tmpdata = comm.recv(source=i)
+            data.extend(tmpdata)
 
-# a.comparsion(b)
+        file.write("\n".join(data))
 
 
 def main():
-    path = '/home/antond/projects/BioHack2019/data/12x3.hdf5'
-
-    with h5py.File(path, 'r') as data_file:
-
-        all_data_from_hdf5 = []
-
-        for key in tqdm(data_file.keys()):
-            one_peptide_data = [
-                Tripep(
-                    name=key,
-                    conf=str(x),
-                    coordinates=data_file[key][str(x)][:]) for x in range(10)
-            ]
-            all_data_from_hdf5.append(one_peptide_data)
-
-        with open('2peptides1.txt', 'w') as file:
-            for pep1 in tqdm(range(len(all_data_from_hdf5))):
-                all_peps_for_pep1 = walker(
-                    all_data_from_hdf5[pep1][0].peptides)
-                for pep2 in range(pep1, len(all_data_from_hdf5)):
-                    if all_data_from_hdf5[pep2][
-                            0].peptides in all_peps_for_pep1:
-                        for x in all_data_from_hdf5[pep1]:
-                            for y in all_data_from_hdf5[pep2]:
-                                c = x.comparsion(y)
-                                if c:
-                                    file.write(str(c) + ' \n')
+    data = peptides_init('/home/antond/projects/BioHack2019/data/12x3.hdf5')
+    peptides_process(
+        peptides_list=data,
+        new_file_name='/home/antond/projects/BioHack2019/src/test_mpi.txt')
 
 
 if __name__ == '__main__':
-    main()
+    # main()
+
+    # %%
