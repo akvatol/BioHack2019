@@ -1,9 +1,10 @@
-#%%
+# %%
 import numpy as np
 from sklearn.metrics import mean_squared_error
-from math import sqrt
-from numba import jit
 from itertools import product
+import h5py
+from tqdm import tqdm
+from numba import jit
 
 TRASHHOLD = 1.5
 
@@ -35,22 +36,24 @@ def walker(pep_type: str):
 
 def pair_creator(first_pep: str, second_pep: str):
     """
-    Принимает на вход два пептида и возвращает все возможные пары 
+    Принимает на вход два пептида и возвращает все возможные пары
     комбинаций
     """
     one_aa = []
     two_aa = []
-    if first_pep[0] == second_pep[2]:
-        pair = str(0) + str(2)
+    # Из длинны цепи вычитаем 1 или 2 для того чтобы
+    # номера получаемых пар совпадали с индексацией
+    if first_pep[0] == second_pep[-1]:
+        pair = str(0) + str(len(second_pep) - 1)
         one_aa.append(pair)
-    if first_pep[2] == second_pep[0]:
-        pair = str(2) + str(0)
+    if first_pep[-1] == second_pep[0]:
+        pair = str(len(second_pep) - 1) + str(0)
         one_aa.append(pair)
-    if first_pep[0:2] == second_pep[1:3]:
-        pair2 = str('01') + str('12')
+    if first_pep[0:2] == second_pep[-2:]:
+        pair2 = str('01') + str(len(second_pep) - 2) + str(len(second_pep) - 1)
         two_aa.append(pair2)
-    if first_pep[1:3] == second_pep[0:2]:
-        pair2 = str('12') + str('01')
+    if first_pep[-2:] == second_pep[0:2]:
+        pair2 = str(len(second_pep) - 2) + str(len(second_pep) - 1) + str('01')
         two_aa.append(pair2)
     if one_aa or two_aa:
         return (tuple(one_aa), tuple(two_aa))
@@ -58,7 +61,7 @@ def pair_creator(first_pep: str, second_pep: str):
 
 def mean(numbers):
     """
-    Функция для расчета среднего арифметического 
+    Функция для расчета среднего арифметического
     """
     return float(sum(numbers)) / max(len(numbers), 1)
 
@@ -103,9 +106,9 @@ def time(func):
     import time
 
     def wrapper(*args, **kwargs):
-        t = time.clock()
+        t = time.perf_counter()
         res = func(*args, **kwargs)
-        print(func.__name__, time.clock() - t)
+        print(func.__name__, time.perf_counter() - t)
         return res
 
     return wrapper
@@ -126,12 +129,12 @@ class Tripep:
         """
         peptides: str
             Строка с последовательность аминокислот
-        
+
         conformation: str (Number)
             Номер конформера (От 0 до 9)
-        
+
         coordinates: np.array
-            Матрица 12 х 3 с координатами (N Ca C O) 
+            Матрица 12 х 3 с координатами (N Ca C O)
         """
         self.peptides = name
         self.docking_pose = conf
@@ -142,7 +145,7 @@ class Tripep:
         pairs: tuple
             Пары одинаковых аминокислот пиптида, для
             которых нужно посчитать RMSD, первое число --
-            номер аминокислоты этого пептида, вторая -- 
+            номер аминокислоты этого пептида, вторая --
             номер аминокислоты пиптида с которым сравниваем.
         """
 
@@ -160,36 +163,74 @@ class Tripep:
     def comparsion_two(self, pairs: tuple, obj):
         """
         Функция для расчета RMSD для ПАР элементов
-        (Пептидов у которых пересечение по ДВУМ аминокислотам) 
+        (Пептидов у которых пересечение по ДВУМ аминокислотам)
         """
         # Переделать, чтобы после первого нахождения прерывалось
         list_of_good_pairs = []
         for pair in pairs:
-            rms1 = None
-            rms2 = None
+            rms1 = rmsd_calc(self.coordinates[int(pair[0])],
+                             obj.coordinates[int(pair[2])])
+            rms2 = rmsd_calc(self.coordinates[int(pair[1])],
+                             obj.coordinates[int(pair[3])])
             if rms1 <= TRASHHOLD and rms2 <= TRASHHOLD:
                 list_of_good_pairs.append([
                     self.peptides, self.docking_pose, obj.peptides,
                     obj.docking_pose, pair, rms1, rms2
                 ])
         return list_of_good_pairs
-    
+
     def comparsion(self, obj):
         all_data = []
         all_pairs = pair_creator(self.peptides, obj.peptides)
         if all_pairs:
             if all_pairs[0]:
-                all_data.append(self.comparsion_one(pairs=all_pairs[0], obj=obj))
+                if self.comparsion_one(pairs=all_pairs[0], obj=obj):
+                    all_data.append(
+                        self.comparsion_one(pairs=all_pairs[0], obj=obj))
             if all_pairs[1]:
-                all_data.append(self.comparsion_two(pairs=all_pairs[1], obj=obj))
+                if self.comparsion_two(pairs=all_pairs[1], obj=obj):
+                    all_data.append(
+                        self.comparsion_two(pairs=all_pairs[1], obj=obj))
         return all_data
 
 
-#%%
+# a = Tripep(name='AAA', conf='1', coordinates=np.random.rand(12, 3))
+# b = Tripep(name='ABA', conf='2', coordinates=np.random.rand(12, 3))
 
-a = Tripep(name='AAA', conf='1', coordinates=np.random.rand(12, 3))
-b = Tripep(name='ABA', conf='2', coordinates=np.random.rand(12, 3))
+# a.comparsion(b)
 
-a.comparsion(b)
 
-#%%
+@time
+def main():
+    path = '/home/antond/projects/BioHack2019/data/12x3.hdf5'
+
+    with h5py.File(path, 'r') as data_file:
+
+        all_data_from_hdf5 = []
+
+        for key in tqdm(data_file.keys()):
+            one_peptide_data = [
+                Tripep(
+                    name=key,
+                    conf=str(x),
+                    coordinates=data_file['AAA'][str(x)][:]) for x in range(10)
+            ]
+            all_data_from_hdf5.append(one_peptide_data)
+        
+        with open('2peptides.txt', 'w') as file:    
+            for pep1 in  tqdm(range(len(all_data_from_hdf5))):
+                all_peps_for_pep1 = walker(all_data_from_hdf5[pep1][0].peptides)
+                for pep2 in range(pep1, len(all_data_from_hdf5)):
+                    if all_data_from_hdf5[pep2][0].peptides in all_peps_for_pep1:
+                        for x in all_data_from_hdf5[pep1]:
+                            for y in all_data_from_hdf5[pep2]:
+                               c = x.comparsion(y)
+                               if c:
+                                   file.write(str(c), end = '\n')
+            
+
+
+if __name__ == '__main__':
+    main()
+
+# %%
