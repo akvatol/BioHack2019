@@ -4,7 +4,6 @@ from sklearn.metrics import mean_squared_error
 from itertools import product
 import h5py
 from tqdm import tqdm
-from numba import jit
 
 TRASHHOLD = 1
 
@@ -154,10 +153,9 @@ class Tripep:
             rms = rmsd_calc(self.coordinates[int(pair[0])],
                             obj.coordinates[int(pair[1])])
             if rms <= TRASHHOLD:
-                list_of_good_pairs.append((
-                    self.peptides, self.docking_pose, obj.peptides,
-                    obj.docking_pose, pair, rms
-                ))
+                list_of_good_pairs.append(
+                    (self.peptides, self.docking_pose, obj.peptides,
+                     obj.docking_pose, pair, rms))
         return (list_of_good_pairs)
 
     def comparsion_two(self, pairs: tuple, obj):
@@ -173,10 +171,9 @@ class Tripep:
             rms2 = rmsd_calc(self.coordinates[int(pair[1])],
                              obj.coordinates[int(pair[3])])
             if rms1 <= TRASHHOLD and rms2 <= TRASHHOLD:
-                list_of_good_pairs.append((
-                    self.peptides, self.docking_pose, obj.peptides,
-                    obj.docking_pose, pair, rms1, rms2
-                ))
+                list_of_good_pairs.append(
+                    (self.peptides, self.docking_pose, obj.peptides,
+                     obj.docking_pose, pair, rms1, rms2))
         return (list_of_good_pairs)
 
     def comparsion(self, obj):
@@ -185,19 +182,50 @@ class Tripep:
         if all_pairs:
             if all_pairs[0]:
                 if self.comparsion_one(pairs=all_pairs[0], obj=obj):
-                    all_data.append(tuple(
-                        self.comparsion_one(pairs=all_pairs[0], obj=obj)))
+                    all_data.append(
+                        tuple(
+                            self.comparsion_one(pairs=all_pairs[0], obj=obj)))
             if all_pairs[1]:
                 if self.comparsion_two(pairs=all_pairs[1], obj=obj):
-                    all_data.append(tuple(
-                        self.comparsion_two(pairs=all_pairs[1], obj=obj)))
+                    all_data.append(
+                        tuple(
+                            self.comparsion_two(pairs=all_pairs[1], obj=obj)))
         return tuple(all_data)
 
+
+def peptides_init(path_to_hdf5: str):
+    with h5py.File(path_to_hdf5, 'r') as data_file:
+        all_data_from_hdf5 = []
+        for key in tqdm(data_file.keys()):
+            one_peptide_data = [
+                Tripep(
+                    name=key,
+                    conf=str(x),
+                    coordinates=data_file[key][str(x)][:]) for x in range(10)
+            ]
+            all_data_from_hdf5.append(one_peptide_data)
+        return all_data_from_hdf5
+
+
+def peptides_process(peptides_list: tuple, file_name: str):
+    with open(file, 'w') as file:
+        for pep1 in tqdm(range(len(all_data_from_hdf5))):
+            all_peps_for_pep1 = walker(
+                all_data_from_hdf5[pep1][0].peptides)
+            for pep2 in range(pep1, len(all_data_from_hdf5)):
+                if all_data_from_hdf5[pep2][
+                        0].peptides in all_peps_for_pep1:
+                    for x in all_data_from_hdf5[pep1]:
+                        for y in all_data_from_hdf5[pep2]:
+                            c = x.comparsion(y)
+                            if c:
+                                file.write(str(c) + ' \n'
 
 # a = Tripep(name='AAA', conf='1', coordinates=np.random.rand(12, 3))
 # b = Tripep(name='ABA', conf='2', coordinates=np.random.rand(12, 3))
 
 # a.comparsion(b)
+
 
 def main():
     path = '/home/antond/projects/BioHack2019/data/12x3.hdf5'
@@ -211,21 +239,22 @@ def main():
                 Tripep(
                     name=key,
                     conf=str(x),
-                    coordinates=data_file['AAA'][str(x)][:]) for x in range(10)
+                    coordinates=data_file[key][str(x)][:]) for x in range(10)
             ]
             all_data_from_hdf5.append(one_peptide_data)
-        
-        with open('2peptides1.txt', 'w') as file:    
-            for pep1 in  tqdm(range(len(all_data_from_hdf5))):
-                all_peps_for_pep1 = walker(all_data_from_hdf5[pep1][0].peptides)
+
+        with open('2peptides1.txt', 'w') as file:
+            for pep1 in tqdm(range(len(all_data_from_hdf5))):
+                all_peps_for_pep1 = walker(
+                    all_data_from_hdf5[pep1][0].peptides)
                 for pep2 in range(pep1, len(all_data_from_hdf5)):
-                    if all_data_from_hdf5[pep2][0].peptides in all_peps_for_pep1:
+                    if all_data_from_hdf5[pep2][
+                            0].peptides in all_peps_for_pep1:
                         for x in all_data_from_hdf5[pep1]:
                             for y in all_data_from_hdf5[pep2]:
-                               c = x.comparsion(y)
-                               if c:
-                                   file.write(str(c) + ' \n')
-            
+                                c = x.comparsion(y)
+                                if c:
+                                    file.write(str(c) + ' \n')
 
 
 if __name__ == '__main__':
