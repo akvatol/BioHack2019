@@ -6,7 +6,7 @@ import h5py
 from tqdm import tqdm
 from numba import jit
 
-TRASHHOLD = 1.5
+TRASHHOLD = 1
 
 amino_alphabet = [
     'A', 'V', 'I', 'L', 'M', 'F', 'Y', 'W', 'S', 'T', 'N', 'Q', 'C', 'G', 'P',
@@ -154,11 +154,11 @@ class Tripep:
             rms = rmsd_calc(self.coordinates[int(pair[0])],
                             obj.coordinates[int(pair[1])])
             if rms <= TRASHHOLD:
-                list_of_good_pairs.append([
+                list_of_good_pairs.append((
                     self.peptides, self.docking_pose, obj.peptides,
                     obj.docking_pose, pair, rms
-                ])
-        return list_of_good_pairs
+                ))
+        return (list_of_good_pairs)
 
     def comparsion_two(self, pairs: tuple, obj):
         """
@@ -173,11 +173,11 @@ class Tripep:
             rms2 = rmsd_calc(self.coordinates[int(pair[1])],
                              obj.coordinates[int(pair[3])])
             if rms1 <= TRASHHOLD and rms2 <= TRASHHOLD:
-                list_of_good_pairs.append([
+                list_of_good_pairs.append((
                     self.peptides, self.docking_pose, obj.peptides,
                     obj.docking_pose, pair, rms1, rms2
-                ])
-        return list_of_good_pairs
+                ))
+        return (list_of_good_pairs)
 
     def comparsion(self, obj):
         all_data = []
@@ -185,13 +185,13 @@ class Tripep:
         if all_pairs:
             if all_pairs[0]:
                 if self.comparsion_one(pairs=all_pairs[0], obj=obj):
-                    all_data.append(
-                        self.comparsion_one(pairs=all_pairs[0], obj=obj))
+                    all_data.append(tuple(
+                        self.comparsion_one(pairs=all_pairs[0], obj=obj)))
             if all_pairs[1]:
                 if self.comparsion_two(pairs=all_pairs[1], obj=obj):
-                    all_data.append(
-                        self.comparsion_two(pairs=all_pairs[1], obj=obj))
-        return all_data
+                    all_data.append(tuple(
+                        self.comparsion_two(pairs=all_pairs[1], obj=obj)))
+        return tuple(all_data)
 
 
 # a = Tripep(name='AAA', conf='1', coordinates=np.random.rand(12, 3))
@@ -199,8 +199,6 @@ class Tripep:
 
 # a.comparsion(b)
 
-
-@time
 def main():
     path = '/home/antond/projects/BioHack2019/data/12x3.hdf5'
 
@@ -217,7 +215,7 @@ def main():
             ]
             all_data_from_hdf5.append(one_peptide_data)
         
-        with open('2peptides.txt', 'w') as file:    
+        with open('2peptides1.txt', 'w') as file:    
             for pep1 in  tqdm(range(len(all_data_from_hdf5))):
                 all_peps_for_pep1 = walker(all_data_from_hdf5[pep1][0].peptides)
                 for pep2 in range(pep1, len(all_data_from_hdf5)):
@@ -226,11 +224,9 @@ def main():
                             for y in all_data_from_hdf5[pep2]:
                                c = x.comparsion(y)
                                if c:
-                                   file.write(str(c), end = '\n')
+                                   file.write(str(c) + ' \n')
             
 
 
 if __name__ == '__main__':
     main()
-
-# %%
