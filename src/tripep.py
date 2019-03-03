@@ -6,6 +6,7 @@ import h5py
 from tqdm import tqdm
 from mpi4py import MPI
 from numba import jit
+import argparse as ag
 """
 Для чего пакет
 """
@@ -218,6 +219,13 @@ class Tripep:
 
 
 def peptides_init(path_to_hdf5: str):
+    """
+    Функция для инициализации пептидов.
+    В файле 'path_to_hdf5' должны храниться
+    данные о N Ca C O атомах аминокислот пептидов, а так же
+    "Имя" пептида (в качестве ключа) и номер его докинг позы
+    (AAA/1/np.random.rand(12,3))
+    """
     with h5py.File(path_to_hdf5, 'r') as data_file:
         all_data_from_hdf5 = []
         all_keys = data_file.keys()
@@ -232,12 +240,9 @@ def peptides_init(path_to_hdf5: str):
         return tuple(all_data_from_hdf5)
 
 
-#%%
-
-
 def peptides_process(peptides_list: tuple, new_file_name: str):
     '''
-    ХЗ КАК РАБОТАЕТ!!!!
+    Функция для обработки инициализированных пептидов
     '''
     with open(new_file_name, 'w') as new_file:
         for pep1_indx in tqdm(range(len(peptides_list))):
@@ -263,7 +268,7 @@ def peptides_process(peptides_list: tuple, new_file_name: str):
 
 def peptides_process_mpi(peptides_list: tuple, new_file_name: str):
     '''
-    ХЗ КАК РАБОТАЕТ!!!!
+    Функция для обработки инициализированных пептидов
     '''
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -296,20 +301,35 @@ def peptides_process_mpi(peptides_list: tuple, new_file_name: str):
             pbar.close()
 
 
-@time
-def test():
-    pep1 = Tripep(name='ACCA', conf='2', coordinates=np.random.rand(16, 4))
-    pep2 = Tripep(name='ACBA', conf='3', coordinates=np.random.rand(16, 4))
-    print(pep1.comparsion_uni(pep2))
+def ag_pars():
+    parser = ag.ArgumentParser()
+
+    parser.add_argument(
+        '-i',
+        '--input-file',
+        required=True,
+        dest='path_to_hdf5',
+        type=str,
+        help='Input file with peptides')
+
+    parser.add_argument(
+        '-o',
+        '--output-file',
+        required=True,
+        dest='new_file_name',
+        type=str,
+        help='Relative path to new file(s)')
+
+    args = vars(parser.parse_args())
+    return args
 
 
 def main():
-    DATA = peptides_init('/home/antond/projects/BioHack2019/data/12x3.hdf5')
-    peptides_process_mpi(peptides_list=DATA, new_file_name='test_new_func.txt')
+    args = ag_pars()
+    data = peptides_init(args['path_to_hdf5'])
+    peptides_process_mpi(
+        peptides_list=data, new_file_name=args['new_file_name'])
 
 
 if __name__ == '__main__':
     main()
-
-
-#%%
